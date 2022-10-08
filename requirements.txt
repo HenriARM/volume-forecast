@@ -2,3 +2,5 @@ hypergbm
 hboard
 tensorboard
 tensorflow # for tb
+ta-lib
+hyperts
