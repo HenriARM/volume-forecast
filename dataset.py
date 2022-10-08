@@ -3,6 +3,7 @@ import pandas as pd
 import re
 import csv
 from sklearn import preprocessing
+import talib as ta
 
 TMPI = 10000
 
@@ -58,22 +59,24 @@ def process(chunk, extra, test_split):
         train_df['hour_sin'] = train_df['hour'].apply(lambda x: np.sin(np.pi * x / 12))
         train_df['hour_cos'] = train_df['hour'].apply(lambda x: np.cos(np.pi * x / 12))
 
+        train_df['MA'] = ta.SMA(df[['vol_last_10']], timeperiod=5)
+        train_df['EMA'] = ta.EMA(df['vol_last_10'], timeperiod=5)
         # ---- TODO: add more features here
 
         # save processed dataframe to csv
         # train_df[['T', 'vol_last_10', 'vol_next_10', 'vol_mov']].to_csv('./train_extra.csv')
 
     # normalize numerical columns
-    # cols_to_norm = ['vol_last_10']
-    # scaler = preprocessing.StandardScaler()
-    # train_df_norm = pd.DataFrame(scaler.fit_transform(train_df[cols_to_norm]), columns=cols_to_norm)
-    # train_df = train_df.drop(cols_to_norm, axis=1)
-    # train_df = train_df.join(train_df_norm)
+    cols_to_norm = ['vol_last_10']
+    scaler = preprocessing.StandardScaler()
+    train_df_norm = pd.DataFrame(scaler.fit_transform(train_df[cols_to_norm]), columns=cols_to_norm)
+    train_df = train_df.drop(cols_to_norm, axis=1)
+    train_df = train_df.join(train_df_norm)
     # tmp
     train_df = train_df.dropna()
 
     # save processed dataframe to csv
-    train_df[['T', 'vol_last_10', 'vol_mov']].to_csv('./train_real_vals.csv')
+    train_df[['vol_last_10', 'vol_mov']].to_csv('./train.csv')
 
 
 def generate_dataset(filename, chunksize, extra, test_split):
