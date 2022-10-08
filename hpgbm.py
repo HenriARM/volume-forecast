@@ -13,7 +13,8 @@ from hypernets.searchers import EvolutionSearcher
 import logging
 import numpy as np
 import pandas as pd
-import pickle
+# import pickle
+import joblib
 
 
 def main():
@@ -28,28 +29,28 @@ def main():
     # )
 
     # difine search_space, use lightgbm, xgboost and catboost
-    search_space = GeneralSearchSpaceGenerator(n_estimators=300, enable_lightgbm=True, enable_xgb=True,
-                                               # enable_catboost=True,
+    search_space = GeneralSearchSpaceGenerator(n_estimators=300,
+                                               enable_lightgbm=True,
+                                               enable_xgb=True,
+                                               enable_catboost=True
                                                # catboost_init_kwargs={'random_state': 8, 'n_estimators': 200}
                                                )
     # define search_algorithm
     searcher = EvolutionSearcher(search_space, optimize_direction='max', population_size=50, sample_size=6,
                                  candidates_size=5)
-    # history = TrialHistory.load_history(search_space, './model.pkl')
-    # searcher = PlaybackSearcher(history, top_n=1, optimize_direction='max')
-
     experiment = make_experiment(
         train_data=filename,
         test_data='./test.csv',
         target='vol_mov',
+        # search_space=search_space,
         cv=True,
         num_folds=5,
-        max_trials=1,
+        max_trials=10,
         early_stopping_time_limit=3600,
         log_level=logging.INFO,
         searcher=searcher,
         random_state=7,
-        ensemble_size=30,
+        ensemble_size=1,
         collinearity_detection=False,
         feature_generation=False,
         drift_detection=False,  # test data is needed
@@ -66,15 +67,13 @@ def main():
     )
     # sklearn Pipeline on the return https://scikit-learn.org/stable/modules/generated/sklearn.pipeline.Pipeline.html
     estimator = experiment.run()
-    print(estimator)
 
     # save model
-    with open('model.pkl', 'wb') as f:
-        pickle.dump(estimator, f)
+    joblib.dump(estimator, 'pipeline.pkl')
 
     # predict
-    y_pred = estimator.predict(
-        pd.DataFrame([[123354, 123354], [123354, 2432], [335355, 124]], columns=['vol_prev_10', 'vol_next_10']))
+    pipeline = joblib.load('pipeline.pkl')
+    y_pred = pipeline.predict(pd.DataFrame([123354, 123354, 123354], columns=['vol_last_10']))
     y_true = np.asarray([0.2314, 1.2342, -4.4325])
     score = calc_score(y_true, y_pred, metrics=['rmse', 'mse', 'mae', 'r2'])
     print('evaluate score:', score)
