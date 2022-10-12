@@ -4,3 +4,4 @@ tensorboard
 tensorflow # for tb
 ta-lib
 hyperts
+statsmodels
