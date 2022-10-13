@@ -9,42 +9,56 @@ from hypernets.searchers import EvolutionSearcher
 # cfg.experiment_discriminator = None
 # from hypernets.core.callbacks import SummaryCallback
 
-# from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, TimeSeriesSplit
+from sklearn import preprocessing
+
 import logging
 import numpy as np
 import pandas as pd
 # import pickle
 import joblib
+import os
 
 
-def main():
-    filename = './train.csv'
-    # df = pd.read_csv(filename, index_col=0).dropna()
-    # print(df)
-    # print(df.info())
-    # y = df['vol_mov']
-    # X = df.drop('vol_mov', axis=1)
-    # X_train, X_test, y_train, y_test = train_test_split(
-    #     X, y, test_size=100, shuffle=False
-    # )
+# normalize numerical columns
+def normalize(df, cols_to_norm):
+    scaler = preprocessing.StandardScaler()
+    df_norm = pd.DataFrame(scaler.fit_transform(df[cols_to_norm]), columns=cols_to_norm)
+    df = df.drop(cols_to_norm, axis=1)
+    df = df.join(df_norm)
+    # scaler = MinMaxScaler()
+    # scaler.fit(x_train)
+    # x_train = pd.DataFrame(data=scaler.transform(x_train),index=x_train.index,columns=x_train.columns)
+    return df  # .copy()
 
-    # difine search_space, use lightgbm, xgboost and catboost
+
+def inference(estimator, x, y_true):
+    y_pred = estimator.predict(x)
+    scores = calc_score(y_true, y_pred, metrics=['rmse', 'mse', 'mae', 'r2'])
+    return scores
+
+
+def run_experiment(train_data, eval_data, target, enable_lightgbm, enable_xgb, enable_catboost):
+    # define search space
     search_space = GeneralSearchSpaceGenerator(n_estimators=300,
-                                               enable_lightgbm=True,
-                                               enable_xgb=True,
-                                               enable_catboost=True
-                                               # catboost_init_kwargs={'random_state': 8, 'n_estimators': 200}
+                                               enable_lightgbm=enable_lightgbm,
+                                               enable_xgb=enable_xgb,
+                                               enable_catboost=enable_catboost
                                                )
-    # define search_algorithm
-    searcher = EvolutionSearcher(search_space, optimize_direction='max', population_size=50, sample_size=6,
+    # define search algorithm
+    searcher = EvolutionSearcher(search_space,
+                                 optimize_direction='min',  # rmse
+                                 population_size=50,
+                                 sample_size=6,
                                  candidates_size=5)
+    # create experiment
     experiment = make_experiment(
-        train_data=filename,
-        test_data='./test.csv',
-        target='vol_mov',
+        train_data=train_data,
+        eval_data=eval_data,
+        target=target,
         # search_space=search_space,
-        cv=True,
-        num_folds=5,
+        cv=False,
+        # num_folds=5,
         max_trials=10,
         early_stopping_time_limit=3600,
         log_level=logging.INFO,
@@ -67,16 +81,62 @@ def main():
     )
     # sklearn Pipeline on the return https://scikit-learn.org/stable/modules/generated/sklearn.pipeline.Pipeline.html
     estimator = experiment.run()
+    return estimator
 
-    # save model
-    joblib.dump(estimator, 'pipeline.pkl')
 
-    # predict
-    pipeline = joblib.load('pipeline.pkl')
-    y_pred = pipeline.predict(pd.DataFrame([123354, 123354, 123354], columns=['vol_last_10']))
-    y_true = np.asarray([0.2314, 1.2342, -4.4325])
-    score = calc_score(y_true, y_pred, metrics=['rmse', 'mse', 'mae', 'r2'])
-    print('evaluate score:', score)
+def main():
+    X_columns = ['vol_last_10', 'vol_last_10_MA', 'vol_last_10_EMA', 'vol_last_10_MACD']
+    y_column = 'vol_mov'
+    model_filename = './models'
+    data_filename = './data.csv'
+    df = pd.read_csv(data_filename)
+    print(df.info(), '\n')
+
+    # cross validation
+    n_splits = 5
+    splits = TimeSeriesSplit(n_splits=n_splits)
+    # last test dataset is not used in cross validation
+    last_test_set_len = len(df) // (n_splits + 2) + len(df) % (n_splits + 2)
+    experiment_idx = 1
+    for train_index, val_index in splits.split(df[:-last_test_set_len]):
+        print(f'Experiment N{experiment_idx}')
+        experiment_idx += 1
+        train_df = df.iloc[train_index]
+        val_df = df.iloc[val_index]
+        # final evaluation dataset is unavailable to the model
+        # sam size as validation set and next in sequence (shifted)
+        test_index = val_index + len(val_index)
+        test_df = df.iloc[test_index]
+        print(f'Lengths - train:{len(train_index)} val:{len(val_index)} test:{len(test_index)}')
+        print(f'Idxs - train {train_index[0]}:{train_index[-1]} val {val_index[0]}:{val_index[-1]} '
+              f'test {test_index[0]}:{test_index[-1]}')
+        print('\n')
+
+        # use only X,y columns
+        train_df = train_df[X_columns + [y_column]]
+        val_df = val_df[X_columns + [y_column]]
+        test_df = test_df[X_columns + [y_column]]
+
+        # normalize datasets separately
+        train_df = normalize(train_df, X_columns)
+        val_df = normalize(val_df, X_columns)
+        test_df = normalize(test_df, X_columns)
+
+        lightgbm_estimator = run_experiment(train_df, val_df, target=y_column,
+                                            enable_lightgbm=True, enable_xgb=False, enable_catboost=False)
+        # save model
+        joblib.dump(lightgbm_estimator, os.path.join(model_filename, 'pipeline.pkl'))
+        # estimator = joblib.load('pipeline.pkl')
+
+        # inference
+        scores = inference(lightgbm_estimator, test_df[X_columns], test_df[y_column])
+        prefix = 'lightgbm'
+        print('lightgbm score:', scores)
+
+        # TODO: save scores + average over all experiemtns for each model
+        # experiment_scored.append(score)
+        # TODO: print conclusion at the end
+
 
 
 if __name__ == '__main__':
