@@ -7,31 +7,51 @@ import talib as ta
 JSON_LINES = 1000
 
 
-def process(df, is_extra):
-    #################### FEATURE ENGINEERING #################################
+# fill missing data with previous val
+def fill_missing_rows(df, tid_col):
+    # make sure  datetime is in chronological order and equidisant (constant time intervals)
+    date_index = pd.date_range(start=df[tid_col].iloc[0], end=df[tid_col].iloc[-1], freq='S')
+    df = df.set_index(tid_col).reindex(date_index, method='pad').reset_index().rename(columns={'index': tid_col})
+    return df
+
+
+def process(agg_trade_df, book_ticker_df, is_extra):
     # TODO: sanity checks - e.x. all rows are with BTC/USDT quotes and etc.
+    time_index_column = 'websocket_time'
+
+    # Agg Trade
     # drop "e" and "s" columns with repetative data
-    df = df.drop(['e', 's'], axis=1)
+    agg_trade_df = agg_trade_df.drop(['e', 's'], axis=1)
     # drop "E" column, usually the difference between "Event time" and "Trade time"
     # is only in few milliseconds https://stackoverflow.com/questions/50688471/binance-event-time-vs-trade-time
-    df = df.drop(['E'], axis=1)
+    agg_trade_df = agg_trade_df.drop(['E', 'T'], axis=1)
     # drop columns "a", "f", "l" we don't need
-    df = df.drop(['a', 'f', 'l'], axis=1)
+    agg_trade_df = agg_trade_df.drop(['a', 'f', 'l'], axis=1)
     # drop None elements
-    df = df.dropna()
+    agg_trade_df = agg_trade_df.dropna()
     # calculate Volume = Price x Quantity for each row
-    df['vol'] = (df['p'] * df['q']).astype(np.float32)
-    # trim miliseconds part from tmsp (last 3 digits), e.x. 1654819201 025
-    df['T'] = df['T'].astype(str).apply(lambda x: x[:-3])
-    # convert timestamp to human datetime
-    df['T'] = df['T'].astype(int).apply(lambda x: pd.Timestamp.fromtimestamp(x).to_pydatetime())
-    # merge trade volumes executed at same second ('m', 'M', 'p' and 'q' columns won't be used)
-    df = df[['T', 'vol']].copy().groupby('T').sum().reset_index()
+    agg_trade_df['vol'] = (agg_trade_df['p'] * agg_trade_df['q']).astype(np.float32)
 
-    # fill missing data with previous val
-    # make sure  datetime is in chronological order and equidisant (constant time intervals)
-    date_index = pd.date_range(start=df['T'].iloc[0], end=df['T'].iloc[-1], freq='S')
-    df = df.set_index('T').reindex(date_index, method='pad').reset_index().rename(columns={'index': 'T'})
+    # # trim miliseconds part from tmsp (last 3 digits), e.x. 1654819201 025
+    # agg_trade_df['T'] = agg_trade_df['T'].astype(str).apply(lambda x: x[:-3])
+    # # convert timestamp to human datetime
+    # agg_trade_df['T'] = agg_trade_df['T'].astype(int).apply(lambda x: pd.Timestamp.fromtimestamp(x).to_pydatetime())
+
+    # merge trade volumes executed at same second ('m', 'M', 'p' and 'q' columns won't be used)
+    agg_trade_df = agg_trade_df[[time_index_column, 'vol']].copy().groupby(time_index_column).sum().reset_index()
+    agg_trade_df = fill_missing_rows(agg_trade_df, time_index_column)
+
+    # Book Ticker
+    # drop None elements
+    book_ticker_df = book_ticker_df.dropna()
+    # average Book Ticker values over same second
+    book_ticker_df = book_ticker_df.copy().groupby(time_index_column).mean().reset_index()
+    book_ticker_df = fill_missing_rows(book_ticker_df, time_index_column)
+
+    # join together
+    df = agg_trade_df.set_index(time_index_column).join(book_ticker_df.set_index(time_index_column)).reset_index()
+    df['market_spread'] = abs(df['b'] - df['a'])
+    # TODO: finish
 
     # cumulative sum of last 10s Volume
     df['vol_last_10'] = df['vol'].rolling(min_periods=1, window=10).sum().reset_index()['vol'].astype(np.float32)
@@ -64,7 +84,7 @@ def process(df, is_extra):
     df.to_csv('./data.csv', index=False)
 
 
-def generate_dataset(filename, chunksize, is_extra):
+def csv_to_df(filename):
     with open(filename, 'r') as read_obj:
         csv_reader = csv.reader(read_obj, delimiter=' ')
         rows = []
@@ -72,8 +92,13 @@ def generate_dataset(filename, chunksize, is_extra):
         for row in csv_reader:
             row = ','.join(row)
             # each line consist of e.x. "1654819200.0034804|" + json line,
-            # to read it normally we need to remove first part
+            # to read it normally we need to remove that part
+            websocket_time = row.split('.')[0]
             row = re.sub('\d+\.\d+\|', '', row)
+            # add websocket time as a param
+            row = row.replace('}', f',"websocket_time":{websocket_time + "}"}')
+            # # remove miliseconds from timestamp (magic)
+            # row = row.split('"m":')[0][:-4] + ',"m":' + row.split('"m":')[-1]
             rows.append(row)
             i += 1
             if JSON_LINES > 0 and i == JSON_LINES:
@@ -81,11 +106,24 @@ def generate_dataset(filename, chunksize, is_extra):
 
         # join json objects
         json_obj = ','.join(rows)
-        # TODO: chunksize and nrows not working for parallel processing of frame
-        for chunk in pd.read_json(json_obj, lines=True, chunksize=chunksize, nrows=chunksize):
-            print(len(chunk))
-            process(chunk, is_extra)
+        return pd.read_json(json_obj, lines=True)
+
+
+def generate_dataset(agg_trade, book_ticker, market_depth, is_extra):
+    agg_trade_df = csv_to_df(filename=agg_trade)
+    book_ticker_df = csv_to_df(filename=book_ticker)
+    # market_depth_df = csv_to_df(filename=market_depth)
+    process(agg_trade_df, book_ticker_df, is_extra)
+    # TODO: save csv_to_df results with averagin over rows and then merge_datasets() do after
+    # TODO: separate process_agg_trade and process_book_ticker functions
 
 
 if __name__ == '__main__':
-    generate_dataset(filename='./datasets/BTCUSDT_aggTrade.csv', chunksize=10000, is_extra=True)
+    generate_dataset(
+        agg_trade='./datasets/BTCUSDT_aggTrade.csv',
+        book_ticker='./datasets/BTCUSDT_bookTicker.csv',
+        market_depth='./datasets/BTCUSDT_depth@100ms.csv',
+        is_extra=True)
+
+    # TODO: parallel processing of json obj not working
+    # for chunk in pd.read_json(json_obj, lines=True, chunksize=chunksize, nrows=chunksize):
