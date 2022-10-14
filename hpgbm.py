@@ -39,6 +39,8 @@ def inference(estimator, x, y_true, metrics):
     return scores
 
 
+# TODO: understand Evolution or use GridSearchCV
+
 def run_experiment(train_data, eval_data, target, enable_lightgbm, enable_xgb, enable_catboost):
     # define search space
     search_space = GeneralSearchSpaceGenerator(n_estimators=300,
@@ -61,7 +63,8 @@ def run_experiment(train_data, eval_data, target, enable_lightgbm, enable_xgb, e
         cv=False,
         # num_folds=5,
         max_trials=10,
-        early_stopping_time_limit=3600,
+        early_stopping_time_limit=None,  # 3600,
+        early_stopping_rounds=None,
         log_level=logging.INFO,
         searcher=searcher,
         random_state=7,
@@ -104,6 +107,15 @@ def main():
     splits = TimeSeriesSplit(n_splits=n_splits)
     # last test dataset is not used in cross validation
     last_test_set_len = len(df) // (n_splits + 2) + len(df) % (n_splits + 2)
+
+    # init metrics dict
+    models = ['lightgbm', 'xgboost', 'catboost']
+    metrics = ['rmse', 'mse', 'mae', 'r2']
+    results = {}
+    for model in models:
+        for metric in metrics:
+            results[f'{model}_{metric}'] = []
+
     experiment_idx = 1
     for train_index, val_index in splits.split(df[:-last_test_set_len]):
         print(f'Experiment N{experiment_idx}')
@@ -129,14 +141,6 @@ def main():
         val_df = normalize(val_df, X_columns)
         test_df = normalize(test_df, X_columns)
 
-        # init metrics dict
-        models = ['lightgbm', 'xgboost', 'catboost']
-        metrics = ['rmse', 'mse', 'mae', 'r2']
-        results = {}
-        for model in models:
-            for metric in metrics:
-                results[f'{model}_{metric}'] = []
-
         # train
         for model in models:
             if model == 'lightgbm':
@@ -156,15 +160,16 @@ def main():
             # inference
             scores = inference(estimator, test_df[X_columns], test_df[y_column], metrics)
             print(f'{model} score:{scores}')
+            print(f'{model} params:{dict(estimator.named_steps)["estimator"].model}')
             # append scores to average
             for score, value in scores.items():
                 results[f'{model}_{score}'].append(value)
     print('Overall performance:')
+    print(results)
     # average model scores over all experiments
     avg_results = {}
     for k in results.keys():
         avg_results[k] = np.mean(results[k])
-    # print(avg_results)
 
     # convert to csv
     avg_results_values = numpy.asarray(list(avg_results.values())).reshape(len(models), len(metrics)).astype(np.float32)
