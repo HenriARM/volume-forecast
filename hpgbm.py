@@ -1,3 +1,4 @@
+import numpy
 from hypergbm import make_experiment
 from hypernets.tabular.metrics import calc_score
 
@@ -32,9 +33,9 @@ def normalize(df, cols_to_norm):
     return df  # .copy()
 
 
-def inference(estimator, x, y_true):
+def inference(estimator, x, y_true, metrics):
     y_pred = estimator.predict(x)
-    scores = calc_score(y_true, y_pred, metrics=['rmse', 'mse', 'mae', 'r2'])
+    scores = calc_score(y_true, y_pred, metrics=metrics)
     return scores
 
 
@@ -87,8 +88,14 @@ def run_experiment(train_data, eval_data, target, enable_lightgbm, enable_xgb, e
 def main():
     X_columns = ['vol_last_10', 'vol_last_10_MA', 'vol_last_10_EMA', 'vol_last_10_MACD']
     y_column = 'vol_mov'
-    model_filename = './models'
+    model_dirname = './models'
+    os.makedirs(model_dirname, exist_ok=True)
+
     data_filename = './data.csv'
+    if os.path.isfile(data_filename) is False:
+        print('CSV is not available, check path')
+        exit(-1)
+
     df = pd.read_csv(data_filename)
     print(df.info(), '\n')
 
@@ -122,21 +129,48 @@ def main():
         val_df = normalize(val_df, X_columns)
         test_df = normalize(test_df, X_columns)
 
-        lightgbm_estimator = run_experiment(train_df, val_df, target=y_column,
-                                            enable_lightgbm=True, enable_xgb=False, enable_catboost=False)
-        # save model
-        joblib.dump(lightgbm_estimator, os.path.join(model_filename, 'pipeline.pkl'))
-        # estimator = joblib.load('pipeline.pkl')
+        # init metrics dict
+        models = ['lightgbm', 'xgboost', 'catboost']
+        metrics = ['rmse', 'mse', 'mae', 'r2']
+        results = {}
+        for model in models:
+            for metric in metrics:
+                results[f'{model}_{metric}'] = []
 
-        # inference
-        scores = inference(lightgbm_estimator, test_df[X_columns], test_df[y_column])
-        prefix = 'lightgbm'
-        print('lightgbm score:', scores)
+        # train
+        for model in models:
+            if model == 'lightgbm':
+                estimator = run_experiment(train_df, val_df, target=y_column,
+                                           enable_lightgbm=True, enable_xgb=False, enable_catboost=False)
+            elif model == 'xgboost':
+                estimator = run_experiment(train_df, val_df, target=y_column,
+                                           enable_lightgbm=False, enable_xgb=True, enable_catboost=False)
+            else:
+                estimator = run_experiment(train_df, val_df, target=y_column,
+                                           enable_lightgbm=False, enable_xgb=False, enable_catboost=True)
 
-        # TODO: save scores + average over all experiemtns for each model
-        # experiment_scored.append(score)
-        # TODO: print conclusion at the end
+            # save model
+            joblib.dump(estimator, os.path.join(model_dirname, f'{model}_exp_{experiment_idx}.pkl'))
+            # estimator = joblib.load('pipeline.pkl')
 
+            # inference
+            scores = inference(estimator, test_df[X_columns], test_df[y_column], metrics)
+            print(f'{model} score:{scores}')
+            # append scores to average
+            for score, value in scores.items():
+                results[f'{model}_{score}'].append(value)
+    print('Overall performance:')
+    # average model scores over all experiments
+    avg_results = {}
+    for k in results.keys():
+        avg_results[k] = np.mean(results[k])
+    # print(avg_results)
+
+    # convert to csv
+    avg_results_values = numpy.asarray(list(avg_results.values())).reshape(len(models), len(metrics)).astype(np.float32)
+    avg_results_df = pd.DataFrame(data=avg_results_values, index=models, columns=metrics)
+    print(avg_results_df)
+    avg_results_df.to_csv('./results.csv')
 
 
 if __name__ == '__main__':
