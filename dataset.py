@@ -4,6 +4,13 @@ import re
 import csv
 import talib as ta
 import os
+import argparse
+import json
+
+parser = argparse.ArgumentParser()
+# parser.add_argument('-device', default='cuda', type=str)
+parser.add_argument('-is_preprocess', default=False, type=lambda x: (str(x).lower() == 'true'))
+args, other_args = parser.parse_known_args()
 
 JSON_LINES = 10000
 
@@ -103,6 +110,9 @@ def process_market_depth(df, time_index_column):
     df = df.dropna()
 
     # feature engineering
+    # if list was serialized as string => convert to list (issue of to_csv())
+    # deserialize_list = lambda l: [s.strip() for s in l[1:-1].split(',')]
+    # df['a'] = df['a'].map(lambda l: deserialize_list(l) if isinstance(df['a'][0], str) else l)
     df['a'] = df['a'].map(lambda l: np.asarray(l).astype(np.float32))
     df['b'] = df['b'].map(lambda l: np.asarray(l).astype(np.float32))
     depth_func = lambda x: np.sum(x[:, 0] * x[:, 1])
@@ -133,17 +143,28 @@ def merge_datasets(agg_trade_df, book_ticker_df, market_depth_df, time_index_col
 
 if __name__ == '__main__':
     dirname = './datasets/'
+    time_index_column = 'websocket_time'
 
     # First step: preprocess
-    time_index_column = 'websocket_time'
-    agg_trade_df = csv_to_df(os.path.join(dirname, 'BTCUSDT_aggTrade.csv'), time_index_column)
-    book_ticker_df = csv_to_df(os.path.join(dirname, 'BTCUSDT_bookTicker.csv'), time_index_column)
-    market_depth_df = csv_to_df(os.path.join(dirname, 'BTCUSDT_depth@100ms.csv'), time_index_column)
+    if args.is_preprocess is True:
+        agg_trade_df = csv_to_df(os.path.join(dirname, 'BTCUSDT_aggTrade.csv'), time_index_column)
+        book_ticker_df = csv_to_df(os.path.join(dirname, 'BTCUSDT_bookTicker.csv'), time_index_column)
+        market_depth_df = csv_to_df(os.path.join(dirname, 'BTCUSDT_depth@100ms.csv'), time_index_column)
 
-    # save results (untill process not fully parallelized to avoid mem kill)
-    agg_trade_df.to_csv(os.path.join(dirname, 'agg_trade.csv'))
-    book_ticker_df.to_csv(os.path.join(dirname, 'book_ticker.csv'))
-    market_depth_df.to_csv(os.path.join(dirname, 'market_depth.csv'))
+        agg_trade_df.to_pickle(os.path.join(dirname, 'agg_trade.pkl'))
+        book_ticker_df.to_pickle(os.path.join(dirname, 'book_ticker.pkl'))
+        market_depth_df.to_pickle(os.path.join(dirname, 'market_depth.pkl'))
+        exit(0)
+
+        # save results (untill process not fully parallelized to avoid mem kill)
+        # saving as to_csv is a shit, its serializing lists to string and other objects, datetimes
+        # which is not directly convertible with pd.read_csv()
+        # agg_trade_df.to_csv(os.path.join(dirname, 'agg_trade.csv'), index=False)
+    else:
+        # agg_trade_df = pd.read_csv(os.path.join(dirname, 'agg_trade.csv'), parse_dates=[time_index_column])
+        agg_trade_df = pd.read_pickle(os.path.join(dirname, 'agg_trade.pkl'))
+        book_ticker_df = pd.read_pickle(os.path.join(dirname, 'book_ticker.pkl'))
+        market_depth_df = pd.read_pickle(os.path.join(dirname, 'market_depth.pkl'))
 
     # Second step: feature engineering
     agg_trade_df = process_agg_trade(agg_trade_df, time_index_column)
