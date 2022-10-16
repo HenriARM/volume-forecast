@@ -172,7 +172,7 @@ if __name__ == '__main__':
     market_depth_df = process_market_depth(market_depth_df, time_index_column)
     df = merge_datasets(agg_trade_df, book_ticker_df, market_depth_df, time_index_column)
     # save processed dataframe to csv
-    df.to_csv('./data.csv', index=False)
+    df.to_pickle(os.path.join(dirname, 'data.pkl'))
 
     # TODO: parallel processing of json obj not working
     # for chunk in pd.read_json(json_obj, lines=True, chunksize=chunksize, nrows=chunksize):
