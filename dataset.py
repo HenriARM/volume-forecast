@@ -101,7 +101,7 @@ def process_book_ticker(df, time_index_column):
     # feature engineering
     df['market_spread'] = abs(df['b'] - df['a'])
     df['mid_price'] = (df['b'] + df['a']) / 2
-    df['vol_imbalance'] = (df['B'] - df['A']) / (df['B'] - df['A'])
+    df['vol_imbalance'] = (df['B'] - df['A']) / (df['B'] + df['A'])
     return df.drop(['u'], axis=1)
 
 
