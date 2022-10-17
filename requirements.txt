@@ -6,3 +6,4 @@ ta-lib
 hyperts
 statsmodels
 argparse
+seaborn

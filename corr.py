@@ -11,5 +11,5 @@ df = df[['vol_last_10', 'market_spread', 'mid_price',
 corr = df.corr()
 # plot the heatmap
 sns.heatmap(corr, xticklabels=corr.columns, yticklabels=corr.columns)
-plt.show()
 plt.savefig('./plots/corr.png')
+plt.show()
