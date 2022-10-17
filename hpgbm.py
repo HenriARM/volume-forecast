@@ -5,7 +5,7 @@ from hypernets.tabular.metrics import calc_score
 # from hypernets.core.trial import TrialHistory
 # from hypernets.searchers import PlaybackSearcher
 from hypergbm.search_space import GeneralSearchSpaceGenerator
-from hypernets.searchers import EvolutionSearcher
+from hypernets.searchers import EvolutionSearcher  # , GridSearcher
 # from hypernets.experiment.cfg import ExperimentCfg as cfg
 # cfg.experiment_discriminator = None
 # from hypernets.core.callbacks import SummaryCallback
@@ -39,8 +39,6 @@ def inference(estimator, x, y_true, metrics):
     return scores
 
 
-# TODO: understand Evolution or use GridSearchCV
-
 def run_experiment(train_data, eval_data, target, enable_lightgbm, enable_xgb, enable_catboost):
     # define search space
     search_space = GeneralSearchSpaceGenerator(n_estimators=300,
@@ -54,6 +52,7 @@ def run_experiment(train_data, eval_data, target, enable_lightgbm, enable_xgb, e
                                  population_size=50,
                                  sample_size=6,
                                  candidates_size=5)
+    # searcher = GridSearcher(search_space, optimize_direction='min')
     # create experiment
     experiment = make_experiment(
         train_data=train_data,
@@ -88,19 +87,46 @@ def run_experiment(train_data, eval_data, target, enable_lightgbm, enable_xgb, e
     return estimator
 
 
+def add_lag(df, column, lags):
+    for lag in lags:
+        df[f'{column}_lag_{lag}'] = df[column].shift(lag)
+    return df
+
+
 def main():
-    X_columns = ['vol_last_10', 'vol_last_10_MA', 'vol_last_10_EMA', 'vol_last_10_MACD']
+    X_columns = ['vol_last_10', 'vol_last_10_MA', 'vol_last_10_MACD', 'market_spread', 'mid_price',
+                 'vol_imbalance', 'market_depth', 'ask_cv', 'bid_cv']
     y_column = 'vol_mov'
     model_dirname = './models'
     os.makedirs(model_dirname, exist_ok=True)
 
-    data_filename = './data.csv'
+    data_filename = './datasets/data.pkl'
     if os.path.isfile(data_filename) is False:
-        print('CSV is not available, check path')
+        print('File is not available, check path')
         exit(-1)
 
-    df = pd.read_csv(data_filename)
+    df = pd.read_pickle(data_filename)
     print(df.info(), '\n')
+
+    # drop unused columns to make X_columns
+    df = df.drop(list(set(df.columns) - set(X_columns + [y_column])), axis=1)
+
+    # add lags
+    df = add_lag(df, 'vol_last_10', lags=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15])
+    df = add_lag(df, 'vol_last_10_MACD', lags=[1, 2, 3, 4, 5])
+    df = add_lag(df, 'vol_last_10_MA', lags=[1, 2, 3, 4, 5])
+    df = add_lag(df, 'market_depth', lags=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15])
+    df = add_lag(df, 'vol_imbalance', lags=[1, 2, 3, 4, 5])
+    df = add_lag(df, 'market_spread', lags=[1, 2, 3, 4, 5])
+    df = add_lag(df, 'ask_cv', lags=[1, 2, 3])
+    df = add_lag(df, 'bid_cv', lags=[1, 2, 3])
+
+    # update X_columns with lagged columns
+    X_columns = list(df.columns)
+    X_columns.remove(y_column)
+
+    # drop first rows with no lagged values
+    df = df.dropna()
 
     # cross validation
     n_splits = 5
@@ -130,7 +156,6 @@ def main():
         print(f'Idxs - train {train_index[0]}:{train_index[-1]} val {val_index[0]}:{val_index[-1]} '
               f'test {test_index[0]}:{test_index[-1]}')
         print('\n')
-
         # use only X,y columns
         train_df = train_df[X_columns + [y_column]]
         val_df = val_df[X_columns + [y_column]]
