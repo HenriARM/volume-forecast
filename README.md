@@ -9,6 +9,8 @@ $ conda activate volfor
 (volfor) $ pip install -r requirements.txt
 ```
 
+Install `.pkl` dataset files from [drive](https://drive.google.com/drive/folders/19DESpljw9d0EcUI0PVQ2CfvX2l5sRuZv?usp=sharing)
+
 # Project structure:
-* `datasets.py`
-* TODO
+* `datasets.py` - creates dataset
+* `hypergbm.py` - runs HyperGBM to train decision trees + inference
