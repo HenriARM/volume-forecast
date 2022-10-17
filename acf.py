@@ -11,7 +11,7 @@ filename = './datasets/data.pkl'
 data = pd.read_pickle(filename)
 for feature in features:
     sm.graphics.tsa.plot_acf(
-        x=data['vol_last_10'],
+        x=data[feature],
         lags=50,
         title=f'{feature} ACF'
     )
